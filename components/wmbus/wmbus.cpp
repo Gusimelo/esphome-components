@@ -69,17 +69,14 @@ namespace wmbus {
       std::string telegram = format_hex_pretty(frame);
       telegram.erase(std::remove(telegram.begin(), telegram.end(), '.'), telegram.end());
 
-      // ToDo: add manufactures check
       uint32_t meter_id = ((uint32_t)frame[7] << 24) | ((uint32_t)frame[6] << 16) |
                           ((uint32_t)frame[5] << 8)  | ((uint32_t)frame[4]);
 
       if (this->wmbus_listeners_.count(meter_id) > 0) {
-        // for debug
         WMBusListener *text_debug{nullptr};
         if (this->wmbus_listeners_.count(0xAFFFFFF5) > 0) {
           text_debug = this->wmbus_listeners_[0xAFFFFFF5];
         }
-        //
         auto *sensor = this->wmbus_listeners_[meter_id];
         if ( ((mbus_data.mode == 'T') && 
               ((sensor->framemode == MODE_T1) || (sensor->framemode == MODE_T1C1))) ||
@@ -121,7 +118,6 @@ namespace wmbus {
                   ESP_LOGV(TAG, "Publishing '%s' = %.4f", ele.first.c_str(), ele.second);
                   this->wmbus_listeners_[meter_id]->sensors_[ele.first]->publish_state(ele.second);
                 }
-                // for debug
                 if (text_debug != nullptr) {
                   if (((this->wmbus_listeners_[meter_id]->type == "apator162") &&
                       (this->wmbus_listeners_[meter_id]->sensors_.count("total_water_m3") > 0) &&
@@ -153,7 +149,6 @@ namespace wmbus {
                     }
                   }
                 }
-                //
               }
               this->led_blink();
             }
@@ -182,92 +177,6 @@ namespace wmbus {
                   telegram.c_str());
         }
       }
-      if (!(this->clients_.empty())) {
-        ESP_LOGVV(TAG, "Will send telegram to clients ...");
-        this->led_blink();
-      }
-      for (auto & client : this->clients_) {
-        switch (client.format) {
-          case FORMAT_HEX:
-            {
-              switch (client.transport) {
-                case TRANSPORT_TCP:
-                  {
-                    ESP_LOGV(TAG, "Will send HEX telegram to %s:%d via TCP", client.ip.str().c_str(), client.port);
-                    if (this->tcp_client_.connect(client.ip.str().c_str(), client.port)) {
-                      this->tcp_client_.write((const uint8_t *) frame.data(), frame.size());
-                      this->tcp_client_.stop();
-                    }
-                    else {
-                      ESP_LOGE(TAG, "Can't connect via TCP to %s:%d", client.ip.str().c_str(), client.port);
-                    }
-                  }
-                  break;
-                case TRANSPORT_UDP:
-                  {
-                    ESP_LOGV(TAG, "Will send HEX telegram to %s:%d via UDP", client.ip.str().c_str(), client.port);
-                    this->udp_client_.beginPacket(client.ip.str().c_str(), client.port);
-                    this->udp_client_.write((const uint8_t *) frame.data(), frame.size());
-                    this->udp_client_.endPacket();
-                  }
-                  break;
-                default:
-                  ESP_LOGE(TAG, "Unknown transport!");
-                  break;
-              }
-            }
-            break;
-          case FORMAT_RTLWMBUS:
-            {
-              time_t current_time = this->time_->now().timestamp;
-              char telegram_time[24];
-              strftime(telegram_time, sizeof(telegram_time), "%Y-%m-%d %H:%M:%S.00Z", gmtime(&current_time));
-              switch (client.transport) {
-                case TRANSPORT_TCP:
-                  {
-                    ESP_LOGV(TAG, "Will send RTLWMBUS telegram to %s:%d via TCP", client.ip.str().c_str(), client.port);
-                    if (this->tcp_client_.connect(client.ip.str().c_str(), client.port)) {
-                      this->tcp_client_.printf("%s;1;1;%s;%d;;;0x",
-                                              frameMode,
-                                              telegram_time,
-                                              mbus_data.rssi);
-                      for (int i = 0; i < frame.size(); i++) {
-                        this->tcp_client_.printf("%02X", frame[i]);
-                      }
-                      this->tcp_client_.print("\n");
-                      this->tcp_client_.stop();
-                    }
-                    else {
-                      ESP_LOGE(TAG, "Can't connect via TCP to %s:%d", client.ip.str().c_str(), client.port);
-                    }
-                  }
-                  break;
-                case TRANSPORT_UDP:
-                  {
-                    ESP_LOGV(TAG, "Will send RTLWMBUS telegram to %s:%d via UDP", client.ip.str().c_str(), client.port);
-                    this->udp_client_.beginPacket(client.ip.str().c_str(), client.port);
-                    this->udp_client_.printf("%s;1;1;%s;%d;;;0x",
-                                            frameMode,
-                                            telegram_time,
-                                            mbus_data.rssi);
-                    for (int i = 0; i < frame.size(); i++) {
-                      this->udp_client_.printf("%02X", frame[i]);
-                    }
-                    this->udp_client_.print("\n");
-                    this->udp_client_.endPacket();
-                  }
-                  break;
-                default:
-                  ESP_LOGE(TAG, "Unknown transport!");
-                  break;
-              }
-            }
-            break;
-          default:
-            ESP_LOGE(TAG, "Unknown format!");
-            break;
-        }
-      }
     }
   }
 
@@ -279,7 +188,7 @@ namespace wmbus {
         {
           if (decrypt_ELL_AES_CTR(telegram, key)) {
             static const uint8_t offset{17};
-            uint8_t payload_len = telegram.size() - 2 - offset;  // telegramFrameSize - CRC - offset
+            uint8_t payload_len = telegram.size() - 2 - offset;
             ESP_LOGV(TAG, "Validating CRC for ELL payload");
             if (!crcValid((safeButUnsafeVectorPtr(telegram) + offset), 0, payload_len)) {
               ret_val = false;
@@ -370,17 +279,6 @@ namespace wmbus {
 
   void WMBusComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "wM-Bus v%s:", MY_VERSION);
-    if (this->clients_.size() > 0) {
-      ESP_LOGCONFIG(TAG, "  Clients:");
-      for (auto & client : this->clients_) {
-        ESP_LOGCONFIG(TAG, "    %s: %s:%d %s [%s]",
-                      client.name.c_str(),
-                      client.ip.str().c_str(),
-                      client.port,
-                      LOG_STR_ARG(transport_to_string(client.transport)),
-                      LOG_STR_ARG(format_to_string(client.format)));
-      }
-    }
     if (this->led_pin_ != nullptr) {
       ESP_LOGCONFIG(TAG, "  LED:");
       LOG_PIN("    Pin: ", this->led_pin_);
@@ -409,8 +307,6 @@ namespace wmbus {
       ESP_LOGE(TAG, "  Check connection to CC1101!");
     }
   }
-
-  ///////////////////////////////////////
 
   void WMBusListener::dump_config() {
     std::string key = format_hex_pretty(this->key);
@@ -441,26 +337,17 @@ namespace wmbus {
     hex_to_bin(key, &(this->key));
   }
 
-  int WMBusListener::char_to_int(char input)
-  {
-    if(input >= '0' && input <= '9') {
-      return input - '0';
-    }
-    if(input >= 'A' && input <= 'F') {
-      return input - 'A' + 10;
-    }
-    if(input >= 'a' && input <= 'f') {
-      return input - 'a' + 10;
-    }
+  int WMBusListener::char_to_int(char input) {
+    if(input >= '0' && input <= '9') return input - '0';
+    if(input >= 'A' && input <= 'F') return input - 'A' + 10;
+    if(input >= 'a' && input <= 'f') return input - 'a' + 10;
     return -1;
   }
 
-  bool WMBusListener::hex_to_bin(const char* src, std::vector<unsigned char> *target)
-  {
+  bool WMBusListener::hex_to_bin(const char* src, std::vector<unsigned char> *target) {
     if (!src) return false;
     while(*src && src[1]) {
       if (*src == ' ' || *src == '#' || *src == '|' || *src == '_') {
-        // Ignore space and hashes and pipes and underlines.
         src++;
       }
       else {
