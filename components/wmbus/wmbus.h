@@ -14,7 +14,7 @@
 
 #include "drivers.h"
 
-#include <WiFiClient.h>
+#include <WiFi.h>
 #include <WiFiUdp.h>
 
 #include "rf_cc1101.h"
